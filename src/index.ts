@@ -1216,3 +1216,15 @@ echo "[+] Telemetry stream active to $SERVER_URL"
 
   webSocketClose(_ws: WebSocket, _code: number, _reason: string, _wasClean: boolean) {}
 }
+
+interface Env {
+  APP: DurableObjectNamespace;
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const id = env.APP.idFromName("global_netpulse_instance");
+    const stub = env.APP.get(id);
+    return stub.fetch(request);
+  }
+};
