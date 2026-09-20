@@ -4,17 +4,19 @@
 
 ---
 
-## ⚡ Quick Start Guide (Local Machine)
+## ⚡ Local Setup & How the Fix Works
 
-### Prerequisites
-- **Node.js**: v18.0.0 or higher
-- **npm** or **pnpm** or **bun**
+If you previously encountered the Wrangler error:
+`Unexpected external import of "cloudflare:workers"` / `Your worker has no default export`
 
----
+**This has been fixed in `src/index.ts` and `wrangler.json`!**
 
-### Step 1: Install Dependencies
+### Step 1: Pull / Sync Code & Install Dependencies
+
+Make sure you have the updated files (`src/index.ts` and `wrangler.json`):
 
 ```bash
+git pull
 npm install
 ```
 
@@ -22,10 +24,16 @@ npm install
 
 ### Step 2: Run in Local Development Mode
 
-Start the local server using Cloudflare Wrangler (runs locally on port `8787` with SQLite DO storage enabled):
+Start the local server using Wrangler:
 
 ```bash
 npm run dev
+```
+
+or directly with npx:
+
+```bash
+npx wrangler dev
 ```
 
 Once started, open your browser and navigate to:
@@ -33,16 +41,16 @@ Once started, open your browser and navigate to:
 
 ---
 
-### Step 3: Run on your Local Company Network (Expose to LAN)
+### Step 3: Expose to Local Company Network (LAN)
 
-To access NetPulse from any computer, switch dashboard, or mobile device on your local network (e.g. `192.168.1.X`):
+To make NetPulse accessible to all computers, switches, and devices on your company network (e.g. `192.168.1.X`):
 
 ```bash
 npx wrangler dev --ip 0.0.0.0 --port 8787
 ```
 
-Now any device on your LAN can access the monitoring dashboard at:
-👉 **`http://<YOUR_LOCAL_IP>:8787`** (e.g. `http://192.168.1.50:8787`)
+Access the dashboard from any browser on your network at:
+👉 **`http://<YOUR_LOCAL_SERVER_IP>:8787`** (e.g. `http://192.168.1.50:8787`)
 
 ---
 
@@ -77,10 +85,3 @@ To deploy NetPulse to your company's self-hosted Cloudflare Worker or local ente
 npm run deploy
 ```
 
----
-
-## 📜 Architecture Overview
-
-- **Backend**: [Hono.js](https://hono.dev/) framework running on Edge Runtime / Durable Objects with local SQLite persistence.
-- **Frontend**: High-density responsive UI built with Tailwind CSS, Chart.js, Lucide Icons, and WebSockets.
-- **Data Persistence**: Native SQLite embedded storage.
