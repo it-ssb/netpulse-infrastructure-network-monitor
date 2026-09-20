@@ -1216,3 +1216,14 @@ echo "[+] Telemetry stream active to $SERVER_URL"
 
   webSocketClose(_ws: WebSocket, _code: number, _reason: string, _wasClean: boolean) {}
 }
+
+export default {
+  async fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> {
+    if (env.NETPULSE_DO) {
+      const id = env.NETPULSE_DO.idFromName("global");
+      const stub = env.NETPULSE_DO.get(id);
+      return stub.fetch(request);
+    }
+    return new Response("NetPulse Monitoring Service", { status: 200 });
+  }
+};
