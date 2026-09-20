@@ -2,7 +2,15 @@
   "name": "netpulse-monitor",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "wrangler deploy --dry-run"
+  },
   "dependencies": {
     "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.109.0"
   }
 }
