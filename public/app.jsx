@@ -16,7 +16,7 @@ function NetPulseApp() {
   const [user, setUser] = useState(null);
   const [authEnabled, setAuthEnabled] = useState(true);
   const [companyName, setCompanyName] = useState('Corporate HQ Network');
-  const [loginForm, setLoginForm] = useState({ username: 'admin', password: 'password123' });
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -35,16 +35,12 @@ function NetPulseApp() {
   const [systemSettings, setSystemSettings] = useState(null);
 
   // UI Control States
-  const [isLive, setIsLive] = useState(true);
+  const [isLive, setIsLive] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [showAddModal, setShowAddModal] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
   const [scanSubnet, setScanSubnet] = useState('192.168.1.0/24');
-  const [selectedCameraModal, setSelectedCameraModal] = useState(null);
-  const [ptzState, setPtzState] = useState({ pan: 0, tilt: 0, zoom: 1 });
   const [toastMessage, setToastMessage] = useState(null);
 
   // Diagnostic Utility States
@@ -275,56 +271,7 @@ function NetPulseApp() {
   }, [authEnabled, user, isLive, typeFilter, statusFilter, searchTerm, selectedNode]);
 
   // Handle Diagnostic Ping / Port Scan / Traceroute
-  const handleRunDiagnostic = async () => {
-    setIsDiagRunning(true);
-    setDiagOutput([`Executing ${diagTool.toUpperCase()} on target: ${diagTarget}...`]);
-    try {
-      let res;
-      if (diagTool === 'ping') {
-        res = await authFetch('/api/tools/ping', {
-          method: 'POST',
-          body: JSON.stringify({ target: diagTarget, count: 4 })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setDiagOutput(data.output);
-        }
-      } else if (diagTool === 'portscan') {
-        res = await authFetch('/api/tools/port-scan', {
-          method: 'POST',
-          body: JSON.stringify({ target: diagTarget })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const lines = [
-            `Port Scan Results for ${data.target}:`,
-            `----------------------------------------`
-          ];
-          data.scanned_ports.forEach((p) => {
-            lines.push(`PORT ${p.port}/tcp (${p.name}): ${p.state.toUpperCase()} ${p.latency_ms ? `[${p.latency_ms}ms]` : ''}`);
-          });
-          setDiagOutput(lines);
-        }
-      } else if (diagTool === 'traceroute') {
-        res = await authFetch('/api/tools/traceroute', {
-          method: 'POST',
-          body: JSON.stringify({ target: diagTarget })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const lines = [`traceroute to ${data.target}, 30 hops max, 60 byte packets`];
-          data.hops.forEach((h) => {
-            lines.push(` ${h.hop}  ${h.name} (${h.ip})  ${h.rtt1}  ${h.rtt2}  ${h.rtt3}`);
-          });
-          setDiagOutput(lines);
-        }
-      }
-    } catch (e) {
-      setDiagOutput([`Error running diagnostic execution: ${e.message}`]);
-    } finally {
-      setIsDiagRunning(false);
-    }
-  };
+
 
   // Handle Acknowledge Alert
   const handleAckAlert = async (alertId) => {
@@ -355,81 +302,16 @@ function NetPulseApp() {
   };
 
   // Handle Simulate Fault
-  const handleSimulateFault = async (nodeId, action) => {
-    try {
-      const res = await authFetch(`/api/nodes/${nodeId}/simulate-fault`, {
-        method: 'POST',
-        body: JSON.stringify({ action })
-      });
-      if (res.ok) {
-        showToast(`Triggered simulation: ${action}`, 'warning');
-        fetchNodes();
-        fetchSummary();
-        fetchAlerts();
-        fetchAuditLogs();
-        if (selectedNode) fetchNodeDetails(nodeId);
-      }
-    } catch (e) {
-      showToast('Simulation failed', 'error');
-    }
-  };
+
 
   // Subnet Discovery Scan
-  const handleRunScan = async () => {
-    setIsScanning(true);
-    showToast(`Scanning subnet ${scanSubnet}...`, 'info');
-    try {
-      const res = await authFetch('/api/discovery/scan', {
-        method: 'POST',
-        body: JSON.stringify({ subnet: scanSubnet })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        showToast(`Scan complete! Discovered ${data.count} devices`, 'success');
-        fetchDiscovery();
-      }
-    } catch (e) {
-      showToast('Scan failed', 'error');
-    } finally {
-      setIsScanning(false);
-    }
-  };
+
 
   // Import Device
-  const handleImportDevice = async (ip) => {
-    try {
-      const res = await authFetch('/api/discovery/import', {
-        method: 'POST',
-        body: JSON.stringify({ ip })
-      });
-      if (res.ok) {
-        showToast(`Imported ${ip} into monitored inventory`, 'success');
-        fetchDiscovery();
-        fetchNodes();
-        fetchAuditLogs();
-      }
-    } catch (e) {
-      showToast('Import failed', 'error');
-    }
-  };
+
 
   // Toggle Switch Port State
-  const handlePortToggle = async (portId, newStatus) => {
-    if (!selectedNodeDetails) return;
-    try {
-      const res = await authFetch(`/api/nodes/${selectedNodeDetails.id}/ports/${portId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ status: newStatus })
-      });
-      if (res.ok) {
-        showToast(`Port status updated to ${newStatus}`, 'success');
-        fetchNodeDetails(selectedNodeDetails.id);
-        fetchAuditLogs();
-      }
-    } catch (e) {
-      showToast('Failed to update port', 'error');
-    }
-  };
+
 
   // Export JSON Backup
   const handleExportBackup = async () => {
@@ -572,7 +454,7 @@ function NetPulseApp() {
           <div className="mt-6 pt-6 border-t border-slate-800/80 text-center">
             <p className="text-[11px] text-slate-400 font-mono">
               Default Admin Credentials:<br />
-              <span className="text-emerald-400 font-bold">admin</span> / <span className="text-emerald-400 font-bold">password123</span>
+              <span>Demo access removed. Secure administrator setup is pending implementation.</span>
             </p>
           </div>
         </div>
@@ -680,7 +562,7 @@ function NetPulseApp() {
 
           {/* Add Device Button */}
           <button
-            onClick={() => setShowAddModal(true)}
+            disabled title="Device enrollment requires the production collector implementation"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-lg shadow-emerald-600/20 transition"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -790,7 +672,7 @@ function NetPulseApp() {
             </div>
             <div className="flex justify-between items-center text-[10px] text-slate-500">
               <span>Port Poller:</span>
-              <span>2.5s SNMP</span>
+              <span>No collector configured</span>
             </div>
           </div>
         </aside>
@@ -955,14 +837,7 @@ function NetPulseApp() {
                         />
                       </div>
 
-                      <button
-                        onClick={handleRunScan}
-                        disabled={isScanning}
-                        className="w-full py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs transition flex items-center justify-center gap-2"
-                      >
-                        {isScanning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                        <span>{isScanning ? 'Scanning Network...' : 'Execute Subnet Scan'}</span>
-                      </button>
+                      <p className="text-slate-400">Network discovery is not implemented.</p>
                     </div>
                   </div>
 
@@ -1100,20 +975,8 @@ function NetPulseApp() {
                           <td className="px-4 py-3 text-emerald-400">{node.latency_ms?.toFixed(1)} ms</td>
                           <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-end gap-1">
-                              <button
-                                onClick={() => handleSimulateFault(node.id, 'cpu_spike')}
-                                className="px-2 py-1 text-[10px] bg-amber-950/60 border border-amber-800 text-amber-300 hover:bg-amber-900 rounded transition"
-                                title="Trigger CPU Fault"
-                              >
-                                Spike
-                              </button>
-                              <button
-                                onClick={() => handleSimulateFault(node.id, 'restore')}
-                                className="px-2 py-1 text-[10px] bg-emerald-950/60 border border-emerald-800 text-emerald-300 hover:bg-emerald-900 rounded transition"
-                                title="Reset State"
-                              >
-                                Reset
-                              </button>
+                              
+                              
                             </div>
                           </td>
                         </tr>
@@ -1128,282 +991,27 @@ function NetPulseApp() {
 
           {/* TAB 3: SWITCH PORT MAPPER */}
           {activeTab === 'switchmap' && (
-            <div className="space-y-6">
-              <div className="bg-[#0d1322] border border-slate-800 rounded-2xl p-6 shadow-xl">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-                  <div>
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Layers className="w-5 h-5 text-emerald-400" />
-                      Core Switch Port Visualizer (24-Port Managed Switch)
-                    </h2>
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">Core-Switch-01 (192.168.1.1) • Cisco Catalyst 9300 48P</p>
-                  </div>
-
-                  <div className="flex items-center gap-3 text-xs font-mono">
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-emerald-500"></span> Link Up</span>
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-500"></span> Warning/Err</span>
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-slate-700"></span> Port Down</span>
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-cyan-500"></span> PoE Active</span>
-                  </div>
-                </div>
-
-                {/* Switch Faceplate 24-Port Grid */}
-                <div className="bg-[#070a11] border-2 border-slate-800 rounded-2xl p-6 shadow-inner">
-                  <div className="grid grid-cols-6 sm:grid-cols-12 gap-3">
-                    {Array.from({ length: 24 }).map((_, idx) => {
-                      const portNum = idx + 1;
-                      const isUp = portNum % 4 !== 0;
-                      const hasPoe = portNum <= 8;
-                      return (
-                        <div
-                          key={portNum}
-                          onClick={() => showToast(`Port ${portNum} selected for detailed diagnostics`, 'info')}
-                          className={`p-3 rounded-xl border flex flex-col items-center justify-between transition cursor-pointer hover:scale-105 ${
-                            isUp
-                              ? 'bg-slate-900 border-slate-700 hover:border-emerald-500'
-                              : 'bg-slate-950 border-slate-800 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between w-full text-[10px] font-mono text-slate-400 mb-2">
-                            <span>#{portNum}</span>
-                            <span className={`w-2 h-2 rounded-full ${isUp ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                          </div>
-
-                          <div className={`w-full py-2 rounded-lg text-center font-mono font-bold text-xs ${
-                            isUp ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60' : 'bg-slate-900 text-slate-600'
-                          }`}>
-                            {isUp ? '1G' : 'OFF'}
-                          </div>
-
-                          <div className="mt-2 text-[9px] font-mono text-slate-400 text-center truncate w-full">
-                            {hasPoe ? 'PoE 15.4W' : 'Data'}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <div className="p-6 text-slate-300">This feature is unavailable until real collection is implemented. No device measurements are being collected.</div>
           )}
 
           {/* TAB 4: SECURITY CAMERAS & NVR */}
           {activeTab === 'cameras' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                    <Camera className="w-5 h-5 text-cyan-400" />
-                    IP Cameras & NVR CCTV Stream Wall
-                  </h2>
-                  <p className="text-xs text-slate-400 font-mono">Live H.265 / RTSP Stream Matrix & Motion Detector</p>
-                </div>
-                <button
-                  onClick={fetchCameras}
-                  className="px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-300 font-mono flex items-center gap-2 hover:text-cyan-400 transition"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Refresh Wall
-                </button>
-              </div>
-
-              {/* Camera Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {cameraChannels.map((cam) => (
-                  <div key={cam.id} className="bg-[#0d1322] border border-slate-800 rounded-2xl overflow-hidden shadow-xl flex flex-col justify-between">
-                    <div>
-                      {/* Video Snapshot Header */}
-                      <div className="relative aspect-video bg-slate-950 border-b border-slate-800 flex items-center justify-center overflow-hidden group">
-                        <div className="absolute top-3 left-3 z-10 flex items-center gap-2 bg-slate-950/80 backdrop-blur px-2.5 py-1 rounded-lg border border-slate-800 text-xs font-mono text-slate-200">
-                          <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
-                          <span>{cam.name}</span>
-                        </div>
-
-                        <div className="absolute bottom-3 right-3 z-10 bg-slate-950/80 backdrop-blur px-2 py-0.5 rounded text-[10px] font-mono text-cyan-400 border border-slate-800">
-                          {cam.resolution} • {cam.fps} FPS
-                        </div>
-
-                        {/* Simulated CCTV Visual */}
-                        <div className="text-center p-4">
-                          <Camera className="w-12 h-12 text-slate-700 mx-auto mb-2 group-hover:text-cyan-400 transition" />
-                          <p className="text-xs text-slate-500 font-mono">RTSP Live Stream Active</p>
-                        </div>
-                      </div>
-
-                      <div className="p-4 space-y-2">
-                        <div className="flex items-center justify-between text-xs font-mono">
-                          <span className="text-slate-400">Codec / Bitrate:</span>
-                          <span className="text-slate-200">{cam.codec || 'H.265'} ({cam.bitrate_kbps} Kbps)</span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs font-mono">
-                          <span className="text-slate-400">Motion Detection:</span>
-                          <span className={cam.motion_detected ? 'text-red-400 font-bold animate-pulse' : 'text-slate-400'}>
-                            {cam.motion_detected ? 'MOTION DETECTED' : 'CLEAR'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="p-4 pt-0">
-                      <button
-                        onClick={() => setSelectedCameraModal(cam)}
-                        className="w-full py-2 bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-800/80 text-cyan-300 rounded-xl text-xs font-mono transition flex items-center justify-center gap-2"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Open PTZ Controls</span>
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <div className="p-6 text-slate-300">This feature is unavailable until real collection is implemented. No device measurements are being collected.</div>
           )}
 
           {/* TAB 5: NETWORK DIAGNOSTICS SUITE */}
           {activeTab === 'diagnostics' && (
-            <div className="space-y-6">
-              <div className="bg-[#0d1322] border border-slate-800 rounded-2xl p-6 shadow-xl">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Terminal className="w-5 h-5 text-emerald-400" />
-                      Interactive Network Diagnostic Console
-                    </h2>
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">Execute ICMP Ping, Port Scans, and Traceroutes directly across local company subnets</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <div>
-                    <label className="block text-xs font-mono text-slate-400 mb-1">Diagnostic Tool</label>
-                    <select
-                      value={diagTool}
-                      onChange={(e) => setDiagTool(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-slate-200 focus:outline-none"
-                    >
-                      <option value="ping">ICMP Ping Probe</option>
-                      <option value="portscan">TCP Common Port Scan</option>
-                      <option value="traceroute">Subnet Traceroute</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-mono text-slate-400 mb-1">Target Host / IP Address</label>
-                    <input
-                      type="text"
-                      value={diagTarget}
-                      onChange={(e) => setDiagTarget(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-slate-200 focus:outline-none"
-                      placeholder="192.168.1.1"
-                    />
-                  </div>
-
-                  <div className="flex items-end">
-                    <button
-                      onClick={handleRunDiagnostic}
-                      disabled={isDiagRunning}
-                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl transition flex items-center justify-center gap-2"
-                    >
-                      {isDiagRunning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                      <span>{isDiagRunning ? 'Executing Tool...' : 'Run Command'}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Terminal Window */}
-                <div className="bg-[#05070d] border border-slate-800/80 rounded-2xl p-4 font-mono text-xs text-emerald-400 h-80 overflow-y-auto leading-relaxed shadow-inner">
-                  {diagOutput.length === 0 ? (
-                    <span className="text-slate-600">// Select a diagnostic tool and hit 'Run Command' to see output...</span>
-                  ) : (
-                    diagOutput.map((line, idx) => (
-                      <div key={idx} className="whitespace-pre-wrap">{line}</div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
+            <div className="p-6 text-slate-300">This feature is unavailable until real collection is implemented. No device measurements are being collected.</div>
           )}
 
           {/* TAB 6: DISCOVERY & IPAM */}
           {activeTab === 'discovery' && (
-            <div className="space-y-6">
-              <div className="bg-[#0d1322] border border-slate-800 rounded-2xl p-6 shadow-xl">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-                  <div>
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Radio className="w-5 h-5 text-cyan-400" />
-                      Subnet Scanner & IPAM Inventory
-                    </h2>
-                    <p className="text-xs text-slate-400 font-mono">Discovered active hosts on local subnets awaiting inventory management</p>
-                  </div>
-
-                  <button
-                    onClick={handleRunScan}
-                    disabled={isScanning}
-                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-2"
-                  >
-                    {isScanning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                    <span>Run Subnet Scan</span>
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs font-mono">
-                    <thead className="bg-[#090d16] text-slate-400 border-b border-slate-800 uppercase tracking-wider text-[11px]">
-                      <tr>
-                        <th className="px-4 py-3">Discovered IP</th>
-                        <th className="px-4 py-3">MAC Address</th>
-                        <th className="px-4 py-3">Vendor</th>
-                        <th className="px-4 py-3">Hostname</th>
-                        <th className="px-4 py-3">Detected Type</th>
-                        <th className="px-4 py-3">Open Ports</th>
-                        <th className="px-4 py-3 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60">
-                      {discovered.map((dev) => (
-                        <tr key={dev.ip} className="hover:bg-slate-900/60 transition">
-                          <td className="px-4 py-3 font-bold text-cyan-400">{dev.ip}</td>
-                          <td className="px-4 py-3 text-slate-300">{dev.mac}</td>
-                          <td className="px-4 py-3 text-slate-200">{dev.vendor}</td>
-                          <td className="px-4 py-3 text-slate-100">{dev.hostname}</td>
-                          <td className="px-4 py-3 uppercase text-slate-400 text-[10px]">{dev.detected_type}</td>
-                          <td className="px-4 py-3 text-emerald-400">{dev.open_ports}</td>
-                          <td className="px-4 py-3 text-right">
-                            {dev.status === 'added' ? (
-                              <span className="text-emerald-400 text-[10px] font-bold">MONITORED</span>
-                            ) : (
-                              <button
-                                onClick={() => handleImportDevice(dev.ip)}
-                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-mono transition"
-                              >
-                                + Import
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <div className="p-6 text-slate-300">This feature is unavailable until real collection is implemented. No device measurements are being collected.</div>
           )}
 
           {/* TAB 7: NETWORK TOPOLOGY */}
           {activeTab === 'topology' && (
-            <div className="space-y-6">
-              <div className="bg-[#0d1322] border border-slate-800 rounded-2xl p-6 shadow-xl text-center py-12">
-                <Network className="w-16 h-16 text-emerald-400 mx-auto mb-4 animate-pulse" />
-                <h2 className="text-xl font-bold text-white mb-2">Interactive Network Topology Map</h2>
-                <p className="text-sm text-slate-400 font-mono max-w-lg mx-auto mb-6">
-                  Core-Switch-01 (192.168.1.1) is interconnected with 10Gbps fiber links to FortiGate Edge FW (192.168.1.254), App-DB-Primary, and Floor1-Dist-Switch.
-                </p>
-                <div className="flex justify-center gap-4 text-xs font-mono text-slate-300">
-                  <span className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-emerald-400">10G Fiber Uplinks: ACTIVE</span>
-                  <span className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-cyan-400">PoE Security Loop: ACTIVE</span>
-                </div>
-              </div>
-            </div>
+            <div className="p-6 text-slate-300">This feature is unavailable until real collection is implemented. No device measurements are being collected.</div>
           )}
 
           {/* TAB 8: ALERTS & INCIDENTS */}
@@ -1564,31 +1172,6 @@ function NetPulseApp() {
         </main>
       </div>
 
-      {/* MODAL 1: ADD DEVICE */}
-      {showAddModal && (
-        <AddDeviceModal
-          onClose={() => setShowAddModal(false)}
-          onAdded={() => {
-            fetchNodes();
-            fetchSummary();
-            fetchAuditLogs();
-            showToast('Device added successfully', 'success');
-          }}
-          authFetch={authFetch}
-        />
-      )}
-
-      {/* MODAL 2: CAMERA STREAM DETAILED CONTROLS */}
-      {selectedCameraModal && (
-        <CameraPTZModal
-          camera={selectedCameraModal}
-          ptzState={ptzState}
-          setPtzState={setPtzState}
-          onClose={() => setSelectedCameraModal(null)}
-          showToast={showToast}
-        />
-      )}
-
       {/* MODAL 3: CHANGE PASSWORD */}
       {showPasswordModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
@@ -1696,166 +1279,6 @@ function MetricCard({ title, value, subtext, icon, color = 'text-white', progres
           ></div>
         </div>
       )}
-    </div>
-  );
-}
-
-function AddDeviceModal({ onClose, onAdded, authFetch }) {
-  const [ip, setIp] = useState('');
-  const [name, setName] = useState('');
-  const [type, setType] = useState('auto');
-  const [location, setLocation] = useState('HQ Server Room');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    try {
-      const res = await authFetch('/api/nodes/probe-and-add', {
-        method: 'POST',
-        body: JSON.stringify({ ip, name, type, location })
-      });
-      if (res.ok) {
-        onAdded();
-        onClose();
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-      <div className="w-full max-w-lg bg-[#0d1322] border border-slate-800 rounded-2xl p-6 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-base text-white flex items-center gap-2">
-            <Plus className="w-5 h-5 text-emerald-400" /> Probe & Add Network Device
-          </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4 font-mono text-xs">
-          <div>
-            <label className="block text-slate-400 mb-1">Device IP Address *</label>
-            <input
-              type="text"
-              required
-              value={ip}
-              onChange={(e) => setIp(e.target.value)}
-              placeholder="192.168.1.50"
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-emerald-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-slate-400 mb-1">Custom Display Name (Optional)</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Core-Router-East"
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="block text-slate-400 mb-1">Device Type Fingerprint</label>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 focus:outline-none"
-            >
-              <option value="auto">Auto-Detect via SNMP & Port Fingerprint</option>
-              <option value="switch">Managed Network Switch</option>
-              <option value="server">Linux / Windows Server</option>
-              <option value="camera">IP Security Camera</option>
-              <option value="nvr">NVR / Storage Server</option>
-              <option value="pc">PC / Workstation</option>
-              <option value="printer">Network Printer</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-slate-400 mb-1">Physical Location Zone</label>
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 focus:outline-none"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition flex items-center justify-center gap-2"
-          >
-            {isSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            <span>{isSubmitting ? 'Probing Device...' : 'Probe & Add Device'}</span>
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function CameraPTZModal({ camera, ptzState, setPtzState, onClose, showToast }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-      <div className="w-full max-w-2xl bg-[#0d1322] border border-slate-800 rounded-2xl p-6 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-base text-white flex items-center gap-2">
-            <Camera className="w-5 h-5 text-cyan-400" /> {camera.name} — PTZ Interactive Controls
-          </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="aspect-video bg-slate-950 rounded-xl mb-6 border border-slate-800 flex items-center justify-center text-center p-6">
-          <div>
-            <p className="text-cyan-400 font-mono text-sm font-bold mb-1">Simulated RTSP Live Feed</p>
-            <p className="text-xs text-slate-500 font-mono">Pan: {ptzState.pan}° | Tilt: {ptzState.tilt}° | Zoom: {ptzState.zoom}x</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4 font-mono text-xs">
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl text-center">
-            <p className="text-slate-400 mb-3 uppercase tracking-wider font-bold">Pan & Tilt Pad</p>
-            <div className="grid grid-cols-3 gap-2 max-w-[150px] mx-auto">
-              <div></div>
-              <button onClick={() => setPtzState({ ...ptzState, tilt: ptzState.tilt + 5 })} className="p-2 bg-slate-800 hover:bg-cyan-900 rounded-lg text-slate-200">▲</button>
-              <div></div>
-              <button onClick={() => setPtzState({ ...ptzState, pan: ptzState.pan - 5 })} className="p-2 bg-slate-800 hover:bg-cyan-900 rounded-lg text-slate-200">◄</button>
-              <button onClick={() => setPtzState({ pan: 0, tilt: 0, zoom: 1 })} className="p-2 bg-slate-800 hover:bg-cyan-900 rounded-lg text-xs text-cyan-400">●</button>
-              <button onClick={() => setPtzState({ ...ptzState, pan: ptzState.pan + 5 })} className="p-2 bg-slate-800 hover:bg-cyan-900 rounded-lg text-slate-200">►</button>
-              <div></div>
-              <button onClick={() => setPtzState({ ...ptzState, tilt: ptzState.tilt - 5 })} className="p-2 bg-slate-800 hover:bg-cyan-900 rounded-lg text-slate-200">▼</button>
-              <div></div>
-            </div>
-          </div>
-
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl text-center flex flex-col justify-between">
-            <div>
-              <p className="text-slate-400 mb-3 uppercase tracking-wider font-bold">Optical Zoom</p>
-              <div className="flex justify-center gap-3">
-                <button onClick={() => setPtzState({ ...ptzState, zoom: Math.max(1, ptzState.zoom - 0.5) })} className="px-4 py-2 bg-slate-800 hover:bg-cyan-900 rounded-lg text-slate-200">- Zoom Out</button>
-                <button onClick={() => setPtzState({ ...ptzState, zoom: Math.min(10, ptzState.zoom + 0.5) })} className="px-4 py-2 bg-slate-800 hover:bg-cyan-900 rounded-lg text-slate-200">+ Zoom In</button>
-              </div>
-            </div>
-            <button
-              onClick={() => showToast('Preset 1 applied (Main Entrance View)', 'success')}
-              className="w-full py-2 bg-cyan-950 border border-cyan-800 text-cyan-300 rounded-lg font-bold"
-            >
-              Set Preset 1 Home
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
