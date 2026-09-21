@@ -14,4 +14,4 @@ class_name = "App"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["App"]
+new_sqlite_classes = ["App"]
