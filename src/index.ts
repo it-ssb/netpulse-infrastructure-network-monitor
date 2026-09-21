@@ -1,7 +1,17 @@
 import { DurableObject } from "cloudflare:workers";
 import { Hono } from "hono";
 
-// Helper seed data for initial setup
+// Default admin credentials and session keys
+const DEFAULT_ADMIN = {
+  id: 'usr-admin-01',
+  username: 'admin',
+  password: 'password123',
+  name: 'Network Administrator',
+  role: 'admin',
+  created_at: Date.now()
+};
+
+// Seed generator
 function buildSeedData() {
   const now = Date.now();
 
@@ -381,6 +391,21 @@ function buildSeedData() {
     { ip: '192.168.1.160', mac: 'E0:63:DA:AA:BB:CC', vendor: 'Ubiquiti Networks', hostname: 'U6-Pro-AccessPoint', detected_type: 'switch', open_ports: '22,80,443,8080', status: 'new', last_scanned: now }
   ];
 
+  const users = [DEFAULT_ADMIN];
+
+  const settings = {
+    company_name: 'Corporate HQ Network',
+    default_subnet: '192.168.1.0/24',
+    polling_interval: 2500,
+    auth_enabled: 1,
+    webhook_url: 'https://hooks.slack.com/services/demo'
+  };
+
+  const auditLogs = [
+    { id: 'aud-01', user: 'admin', action: 'System Setup', details: 'Initialized NetPulse Monitoring Infrastructure', timestamp: now - 86400000 },
+    { id: 'aud-02', user: 'admin', action: 'Device Added', details: 'Probed and added Core-Switch-01 (192.168.1.1)', timestamp: now - 43200000 }
+  ];
+
   const metricHistory: any[] = [];
   for (const n of nodes) {
     for (let i = 20; i >= 0; i--) {
@@ -399,10 +424,10 @@ function buildSeedData() {
     }
   }
 
-  return { nodes, switchPorts, cameraChannels, alertRules, alerts, discoveredDevices, metricHistory };
+  return { nodes, switchPorts, cameraChannels, alertRules, alerts, discoveredDevices, users, settings, auditLogs, metricHistory };
 }
 
-// In-Memory Fallback Store for Worker execution when DO binding is missing
+// In-Memory Fallback Store
 class InMemoryStore {
   nodes: any[];
   switchPorts: any[];
@@ -410,6 +435,10 @@ class InMemoryStore {
   alertRules: any[];
   alerts: any[];
   discoveredDevices: any[];
+  users: any[];
+  settings: any;
+  auditLogs: any[];
+  sessions: Map<string, any> = new Map();
   metricHistory: any[];
 
   constructor() {
@@ -420,7 +449,23 @@ class InMemoryStore {
     this.alertRules = seed.alertRules;
     this.alerts = seed.alerts;
     this.discoveredDevices = seed.discoveredDevices;
+    this.users = seed.users;
+    this.settings = seed.settings;
+    this.auditLogs = seed.auditLogs;
     this.metricHistory = seed.metricHistory;
+
+    // Seed default admin token
+    this.sessions.set("np_demo_token_admin", DEFAULT_ADMIN);
+  }
+
+  logAudit(user: string, action: string, details: string) {
+    this.auditLogs.unshift({
+      id: `aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      user,
+      action,
+      details,
+      timestamp: Date.now()
+    });
   }
 
   stepSimulation() {
@@ -461,10 +506,229 @@ class InMemoryStore {
 
 const memStore = new InMemoryStore();
 
-// Setup Hono router for API endpoints
+// Router builder
 function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
   const router = new Hono();
 
+  // Helper to get active user from token
+  const getUserFromReq = (c: any) => {
+    const authHeader = c.req.header("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "") || c.req.header("X-NetPulse-Token");
+    if (!token) return null;
+
+    const { store, isSql } = getStore(c);
+    if (isSql) {
+      const sess = store.ctx.storage.sql.exec(`SELECT * FROM sessions WHERE token = ?`, token).one() as any;
+      if (!sess) return null;
+      const usr = store.ctx.storage.sql.exec(`SELECT id, username, name, role, created_at FROM users WHERE id = ?`, sess.user_id).one() as any;
+      return usr;
+    } else {
+      return memStore.sessions.get(token) || null;
+    }
+  };
+
+  // Auth Middleware
+  router.use("/api/*", async (c, next) => {
+    const path = c.req.path;
+    // Allow public auth routes & health check
+    if (
+      path === "/api/auth/login" ||
+      path === "/api/auth/status" ||
+      path === "/api/dashboard/summary"
+    ) {
+      return await next();
+    }
+
+    const { store, isSql } = getStore(c);
+    let authEnabled = true;
+
+    if (isSql) {
+      const st = store.ctx.storage.sql.exec(`SELECT auth_enabled FROM settings LIMIT 1`).one() as any;
+      if (st && st.auth_enabled === 0) authEnabled = false;
+    } else {
+      if (memStore.settings && memStore.settings.auth_enabled === 0) authEnabled = false;
+    }
+
+    if (!authEnabled) {
+      return await next();
+    }
+
+    const user = getUserFromReq(c);
+    if (!user) {
+      return c.json({ error: "Unauthorized access. Please login.", auth_required: true }, 401);
+    }
+
+    c.set("user", user);
+    return await next();
+  });
+
+  // Auth Status / Info
+  router.get("/api/auth/status", (c) => {
+    const { store, isSql } = getStore(c);
+    let authEnabled = true;
+    let companyName = "Corporate HQ Network";
+
+    if (isSql) {
+      const st = store.ctx.storage.sql.exec(`SELECT * FROM settings LIMIT 1`).one() as any;
+      if (st) {
+        authEnabled = st.auth_enabled === 1;
+        companyName = st.company_name;
+      }
+    } else {
+      authEnabled = memStore.settings.auth_enabled === 1;
+      companyName = memStore.settings.company_name;
+    }
+
+    const currentUser = getUserFromReq(c);
+    return c.json({ auth_enabled: authEnabled, company_name: companyName, user: currentUser });
+  });
+
+  // Login Endpoint
+  router.post("/api/auth/login", async (c) => {
+    const { store, isSql } = getStore(c);
+    const body = await c.req.json<any>();
+    const username = (body.username || '').trim().toLowerCase();
+    const password = body.password || '';
+
+    let user: any = null;
+    if (isSql) {
+      user = store.ctx.storage.sql.exec(`SELECT * FROM users WHERE LOWER(username) = ? AND password = ?`, username, password).one() as any;
+    } else {
+      user = memStore.users.find((u: any) => u.username.toLowerCase() === username && u.password === password);
+    }
+
+    if (!user) {
+      return c.json({ error: "Invalid username or password" }, 401);
+    }
+
+    const token = `np_token_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+    const now = Date.now();
+
+    if (isSql) {
+      store.ctx.storage.sql.exec(
+        `INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)`,
+        token, user.id, now
+      );
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${now}`, user.username, 'User Login', `Logged in from local console`, now
+      );
+    } else {
+      memStore.sessions.set(token, { id: user.id, username: user.username, name: user.name, role: user.role, created_at: user.created_at });
+      memStore.logAudit(user.username, 'User Login', `Logged in from local console`);
+    }
+
+    return c.json({
+      ok: true,
+      token,
+      user: { id: user.id, username: user.username, name: user.name, role: user.role }
+    });
+  });
+
+  // Get current user info
+  router.get("/api/auth/me", (c) => {
+    const user = getUserFromReq(c);
+    if (!user) return c.json({ error: "Not logged in" }, 401);
+    return c.json(user);
+  });
+
+  // Logout
+  router.post("/api/auth/logout", (c) => {
+    const authHeader = c.req.header("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "") || c.req.header("X-NetPulse-Token");
+    const { store, isSql } = getStore(c);
+
+    if (token) {
+      if (isSql) {
+        store.ctx.storage.sql.exec(`DELETE FROM sessions WHERE token = ?`, token);
+      } else {
+        memStore.sessions.delete(token);
+      }
+    }
+    return c.json({ ok: true });
+  });
+
+  // Change Password
+  router.post("/api/auth/change-password", async (c) => {
+    const user = getUserFromReq(c);
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const { store, isSql } = getStore(c);
+    const { old_password, new_password } = await c.req.json<any>();
+
+    if (!new_password || new_password.length < 4) {
+      return c.json({ error: "New password must be at least 4 characters long" }, 400);
+    }
+
+    if (isSql) {
+      const dbUser = store.ctx.storage.sql.exec(`SELECT * FROM users WHERE id = ?`, user.id).one() as any;
+      if (!dbUser || dbUser.password !== old_password) {
+        return c.json({ error: "Incorrect current password" }, 400);
+      }
+      store.ctx.storage.sql.exec(`UPDATE users SET password = ? WHERE id = ?`, new_password, user.id);
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${Date.now()}`, user.username, 'Password Change', `Updated account password`, Date.now()
+      );
+    } else {
+      const dbUser = memStore.users.find((u: any) => u.id === user.id);
+      if (!dbUser || dbUser.password !== old_password) {
+        return c.json({ error: "Incorrect current password" }, 400);
+      }
+      dbUser.password = new_password;
+      memStore.logAudit(user.username, 'Password Change', `Updated account password`);
+    }
+
+    return c.json({ ok: true });
+  });
+
+  // Manage Users
+  router.get("/api/auth/users", (c) => {
+    const { store, isSql } = getStore(c);
+    if (isSql) {
+      const users = store.ctx.storage.sql.exec(`SELECT id, username, name, role, created_at FROM users`).toArray();
+      return c.json(users);
+    } else {
+      return c.json(memStore.users.map((u: any) => ({ id: u.id, username: u.username, name: u.name, role: u.role, created_at: u.created_at })));
+    }
+  });
+
+  router.post("/api/auth/users", async (c) => {
+    const activeUser = getUserFromReq(c);
+    const { store, isSql } = getStore(c);
+    const body = await c.req.json<any>();
+    const id = `usr-${Date.now()}`;
+    const now = Date.now();
+
+    if (!body.username || !body.password) {
+      return c.json({ error: "Username and password are required" }, 400);
+    }
+
+    if (isSql) {
+      store.ctx.storage.sql.exec(
+        `INSERT INTO users (id, username, password, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        id, body.username, body.password, body.name || body.username, body.role || 'viewer', now
+      );
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${now}`, activeUser?.username || 'admin', 'Create User', `Created user ${body.username} (${body.role})`, now
+      );
+    } else {
+      memStore.users.push({
+        id,
+        username: body.username,
+        password: body.password,
+        name: body.name || body.username,
+        role: body.role || 'viewer',
+        created_at: now
+      });
+      memStore.logAudit(activeUser?.username || 'admin', 'Create User', `Created user ${body.username} (${body.role})`);
+    }
+
+    return c.json({ ok: true, id });
+  });
+
+  // Dashboard summary
   router.get("/api/dashboard/summary", (c) => {
     const { store, isSql } = getStore(c);
 
@@ -535,6 +799,7 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     }
   });
 
+  // Nodes API
   router.get("/api/nodes", (c) => {
     const { store, isSql } = getStore(c);
     const type = c.req.query("type");
@@ -577,7 +842,9 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     return c.json(rows);
   });
 
+  // Probe and add node
   router.post("/api/nodes/probe-and-add", async (c) => {
+    const user = getUserFromReq(c);
     const { store, isSql } = getStore(c);
     const body = await c.req.json<any>();
     const targetIp = (body.ip || '192.168.1.200').trim();
@@ -685,6 +952,11 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
           `chan-${id}-1`, id, 1, `Stream CH01 - ${deviceName}`, '1080p 1920x1080', 30, 4096, 0, 'online'
         );
       }
+
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${now}`, user?.username || 'admin', 'Device Added', `Added ${deviceName} (${targetIp})`, now
+      );
     } else {
       memStore.nodes.push(newNode);
 
@@ -721,13 +993,15 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
           status: 'online'
         });
       }
+
+      memStore.logAudit(user?.username || 'admin', 'Device Added', `Added ${deviceName} (${targetIp})`);
     }
 
     const probeDiagnostics = [
       { step: 1, title: 'ICMP Ping Reachability', result: `SUCCESS (${latency}ms round-trip to ${targetIp})` },
       { step: 2, title: 'TCP/UDP Port Discovery', result: `SUCCESS (Open Services: ${portsOpen})` },
       { step: 3, title: 'SNMP & System Handshake', result: `SUCCESS (Fingerprinted: ${vendor} ${model})` },
-      { step: 4, title: 'Live Telemetry Stream', result: `ACTIVE (1s high-frequency metrics initialized)` }
+      { step: 4, title: 'Live Telemetry Stream', result: `ACTIVE (High-frequency metrics initialized)` }
     ];
 
     return c.json({
@@ -738,33 +1012,7 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     });
   });
 
-  router.post("/api/nodes/:id/poll-now", async (c) => {
-    const { store, isSql } = getStore(c);
-    const id = c.req.param("id");
-
-    if (isSql) {
-      const node = store.ctx.storage.sql.exec(`SELECT * FROM nodes WHERE id = ?`, id).one() as any;
-      if (!node) return c.json({ error: "Node not found" }, 404);
-      const now = Date.now();
-      const updatedCpu = Math.min(99, Math.max(2, node.cpu_usage + (Math.random() * 8 - 4)));
-      const updatedMem = Math.min(99, Math.max(5, node.memory_usage + (Math.random() * 4 - 2)));
-      const updatedLat = Math.max(0.3, node.latency_ms + (Math.random() * 0.8 - 0.4));
-      store.ctx.storage.sql.exec(
-        `UPDATE nodes SET cpu_usage = ?, memory_usage = ?, latency_ms = ?, last_seen = ? WHERE id = ?`,
-        updatedCpu, updatedMem, updatedLat, now, id
-      );
-      return c.json({ ok: true, timestamp: now, metrics: { cpu: updatedCpu, memory: updatedMem, latency: updatedLat } });
-    } else {
-      const node = memStore.nodes.find((n: any) => n.id === id);
-      if (!node) return c.json({ error: "Node not found" }, 404);
-      node.cpu_usage = Math.min(99, Math.max(2, node.cpu_usage + (Math.random() * 8 - 4)));
-      node.memory_usage = Math.min(99, Math.max(5, node.memory_usage + (Math.random() * 4 - 2)));
-      node.latency_ms = Math.max(0.3, node.latency_ms + (Math.random() * 0.8 - 0.4));
-      node.last_seen = Date.now();
-      return c.json({ ok: true, timestamp: node.last_seen, metrics: { cpu: node.cpu_usage, memory: node.memory_usage, latency: node.latency_ms } });
-    }
-  });
-
+  // Single Node detail
   router.get("/api/nodes/:id", (c) => {
     const { store, isSql } = getStore(c);
     const id = c.req.param("id");
@@ -790,7 +1038,9 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     }
   });
 
+  // Delete node
   router.delete("/api/nodes/:id", (c) => {
+    const user = getUserFromReq(c);
     const { store, isSql } = getStore(c);
     const id = c.req.param("id");
 
@@ -800,18 +1050,25 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
       store.ctx.storage.sql.exec(`DELETE FROM camera_channels WHERE node_id = ?`, id);
       store.ctx.storage.sql.exec(`DELETE FROM metric_history WHERE node_id = ?`, id);
       store.ctx.storage.sql.exec(`DELETE FROM alerts WHERE node_id = ?`, id);
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${Date.now()}`, user?.username || 'admin', 'Device Deleted', `Removed device ${id}`, Date.now()
+      );
     } else {
       memStore.nodes = memStore.nodes.filter((n: any) => n.id !== id);
       memStore.switchPorts = memStore.switchPorts.filter((p: any) => p.node_id !== id);
       memStore.cameraChannels = memStore.cameraChannels.filter((c: any) => c.node_id !== id);
       memStore.metricHistory = memStore.metricHistory.filter((m: any) => m.node_id !== id);
       memStore.alerts = memStore.alerts.filter((a: any) => a.node_id !== id);
+      memStore.logAudit(user?.username || 'admin', 'Device Deleted', `Removed device ${id}`);
     }
 
     return c.json({ ok: true });
   });
 
+  // Fault simulation
   router.post("/api/nodes/:id/simulate-fault", async (c) => {
+    const user = getUserFromReq(c);
     const { store, isSql } = getStore(c);
     const id = c.req.param("id");
     const { action } = await c.req.json<{ action: string }>();
@@ -848,6 +1105,11 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
         store.ctx.storage.sql.exec(`UPDATE nodes SET status = 'online', cpu_usage = 18.0, latency_ms = 1.2, packet_loss = 0.0 WHERE id = ?`, id);
         store.ctx.storage.sql.exec(`UPDATE alerts SET status = 'resolved' WHERE node_id = ? AND status = 'active'`, id);
       }
+
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${now}`, user?.username || 'admin', 'Simulation Fault Triggered', `${action} on ${nodeName}`, now
+      );
     } else {
       const node = memStore.nodes.find((n: any) => n.id === id);
       if (!node) return c.json({ error: "Node not found" }, 404);
@@ -901,12 +1163,16 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
           if (a.node_id === id && a.status === 'active') a.status = 'resolved';
         });
       }
+
+      memStore.logAudit(user?.username || 'admin', 'Simulation Fault Triggered', `${action} on ${nodeName}`);
     }
 
     return c.json({ ok: true });
   });
 
+  // Switch port update
   router.put("/api/nodes/:nodeId/ports/:portId", async (c) => {
+    const user = getUserFromReq(c);
     const { store, isSql } = getStore(c);
     const portId = c.req.param("portId");
     const body = await c.req.json<any>();
@@ -921,6 +1187,10 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
       if (body.poe_status !== undefined) {
         store.ctx.storage.sql.exec(`UPDATE switch_ports SET poe_status = ? WHERE id = ?`, body.poe_status, portId);
       }
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${Date.now()}`, user?.username || 'admin', 'Port Configuration', `Updated switch port ${portId}`, Date.now()
+      );
     } else {
       const port = memStore.switchPorts.find((p: any) => p.id === portId);
       if (port) {
@@ -928,11 +1198,101 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
         if (body.vlan !== undefined) port.vlan = body.vlan;
         if (body.poe_status !== undefined) port.poe_status = body.poe_status;
       }
+      memStore.logAudit(user?.username || 'admin', 'Port Configuration', `Updated switch port ${portId}`);
     }
 
     return c.json({ ok: true });
   });
 
+  // Network Tools (Ping, Port Scan, Traceroute)
+  router.post("/api/tools/ping", async (c) => {
+    const { target, count = 4 } = await c.req.json<any>();
+    const host = (target || '192.168.1.1').trim();
+    const packets = Math.min(10, Math.max(1, count));
+    const lines: string[] = [];
+
+    lines.push(`PING ${host} (${host}) 56(84) bytes of data.`);
+    let lost = 0;
+    let minLat = 999;
+    let maxLat = 0;
+    let totalLat = 0;
+
+    for (let i = 1; i <= packets; i++) {
+      const isDropped = Math.random() < 0.05;
+      if (isDropped) {
+        lost++;
+        lines.push(`Request timeout for icmp_seq ${i}`);
+      } else {
+        const rtt = Math.round((Math.random() * 3 + 0.4) * 10) / 10;
+        minLat = Math.min(minLat, rtt);
+        maxLat = Math.max(maxLat, rtt);
+        totalLat += rtt;
+        lines.push(`64 bytes from ${host}: icmp_seq=${i} ttl=64 time=${rtt} ms`);
+      }
+    }
+
+    const avgLat = packets > lost ? Math.round((totalLat / (packets - lost)) * 10) / 10 : 0;
+    const lossPct = Math.round((lost / packets) * 100);
+
+    lines.push(`--- ${host} ping statistics ---`);
+    lines.push(`${packets} packets transmitted, ${packets - lost} received, ${lossPct}% packet loss, time ${packets * 1000}ms`);
+    lines.push(`rtt min/avg/max = ${minLat === 999 ? 0 : minLat}/${avgLat}/${maxLat} ms`);
+
+    return c.json({
+      target: host,
+      success: lossPct < 100,
+      packetsSent: packets,
+      packetsReceived: packets - lost,
+      packetLossPct: lossPct,
+      avgLatencyMs: avgLat,
+      output: lines
+    });
+  });
+
+  router.post("/api/tools/port-scan", async (c) => {
+    const { target } = await c.req.json<any>();
+    const host = (target || '192.168.1.1').trim();
+
+    const commonPorts = [
+      { port: 22, name: 'SSH' },
+      { port: 53, name: 'DNS' },
+      { port: 80, name: 'HTTP Web Console' },
+      { port: 161, name: 'SNMP Agent' },
+      { port: 443, name: 'HTTPS' },
+      { port: 554, name: 'RTSP Stream' },
+      { port: 3389, name: 'RDP Remote Desktop' },
+      { port: 5000, name: 'Synology / Custom Web' },
+      { port: 8000, name: 'Hikvision SDK' },
+      { port: 8080, name: 'HTTP Proxy / Admin' }
+    ];
+
+    const results = commonPorts.map((p) => {
+      const open = Math.random() > 0.4;
+      return {
+        port: p.port,
+        name: p.name,
+        state: open ? 'open' : 'closed',
+        latency_ms: open ? Math.round((Math.random() * 2 + 0.5) * 10) / 10 : null
+      };
+    });
+
+    return c.json({ target: host, scanned_ports: results });
+  });
+
+  router.post("/api/tools/traceroute", async (c) => {
+    const { target } = await c.req.json<any>();
+    const host = (target || '192.168.1.1').trim();
+
+    const hops = [
+      { hop: 1, ip: '192.168.1.254', name: 'FortiGate-Edge-FW.local', rtt1: '0.4 ms', rtt2: '0.5 ms', rtt3: '0.4 ms' },
+      { hop: 2, ip: '192.168.1.1', name: 'Core-Switch-01.local', rtt1: '0.8 ms', rtt2: '0.7 ms', rtt3: '0.9 ms' },
+      { hop: 3, ip: host, name: `${host}.local`, rtt1: '1.2 ms', rtt2: '1.4 ms', rtt3: '1.1 ms' }
+    ];
+
+    return c.json({ target: host, hops });
+  });
+
+  // Camera list
   router.get("/api/cameras", (c) => {
     const { store, isSql } = getStore(c);
 
@@ -947,6 +1307,7 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     }
   });
 
+  // Discovery
   router.get("/api/discovery", (c) => {
     const { store, isSql } = getStore(c);
 
@@ -993,6 +1354,7 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
   });
 
   router.post("/api/discovery/import", async (c) => {
+    const user = getUserFromReq(c);
     const { store, isSql } = getStore(c);
     const { ip } = await c.req.json<{ ip: string }>();
 
@@ -1006,6 +1368,10 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
           id, dev.hostname || dev.ip, dev.ip, dev.detected_type || 'server', 'online', dev.vendor || 'Generic', 'Auto Discovered', 'Auto Discovered Zone', 'Unassigned', 'Unknown OS', 3600, 12.0, 35.0, 40.0, 1.8, 0.0, 5.0, 2.0, 'v2c', 'public', dev.open_ports, Date.now()
         );
         store.ctx.storage.sql.exec(`UPDATE discovered_devices SET status = 'added' WHERE ip = ?`, ip);
+        store.ctx.storage.sql.exec(
+          `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+          `aud-${Date.now()}`, user?.username || 'admin', 'Import Device', `Imported ${dev.ip} into inventory`, Date.now()
+        );
       }
     } else {
       const dev = memStore.discoveredDevices.find((d: any) => d.ip === ip);
@@ -1035,12 +1401,14 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
           ports_open: dev.open_ports,
           last_seen: Date.now()
         });
+        memStore.logAudit(user?.username || 'admin', 'Import Device', `Imported ${dev.ip} into inventory`);
       }
     }
 
     return c.json({ ok: true });
   });
 
+  // Alerts API
   router.get("/api/alerts", (c) => {
     const { store, isSql } = getStore(c);
 
@@ -1053,18 +1421,19 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
   });
 
   router.post("/api/alerts/:id/ack", async (c) => {
+    const user = getUserFromReq(c);
     const { store, isSql } = getStore(c);
     const id = c.req.param("id");
     const now = Date.now();
 
     if (isSql) {
-      store.ctx.storage.sql.exec(`UPDATE alerts SET status = 'acknowledged', ack_at = ?, ack_by = 'Admin' WHERE id = ?`, now, id);
+      store.ctx.storage.sql.exec(`UPDATE alerts SET status = 'acknowledged', ack_at = ?, ack_by = ? WHERE id = ?`, now, user?.username || 'Admin', id);
     } else {
       const alert = memStore.alerts.find((a: any) => a.id === id);
       if (alert) {
         alert.status = 'acknowledged';
         alert.ack_at = now;
-        alert.ack_by = 'Admin';
+        alert.ack_by = user?.username || 'Admin';
       }
     }
 
@@ -1085,6 +1454,7 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     return c.json({ ok: true });
   });
 
+  // Alert Rules
   router.get("/api/alert-rules", (c) => {
     const { store, isSql } = getStore(c);
 
@@ -1117,6 +1487,7 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     return c.json({ ok: true, id });
   });
 
+  // Topology Map
   router.get("/api/topology", (c) => {
     const { store, isSql } = getStore(c);
     let nodes: any[] = [];
@@ -1144,10 +1515,140 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     return c.json({ nodes, links });
   });
 
+  // System Settings
+  router.get("/api/settings", (c) => {
+    const { store, isSql } = getStore(c);
+    if (isSql) {
+      const st = store.ctx.storage.sql.exec(`SELECT * FROM settings LIMIT 1`).one() as any;
+      return c.json(st || { company_name: 'Corporate HQ Network', auth_enabled: 1 });
+    } else {
+      return c.json(memStore.settings);
+    }
+  });
+
+  router.post("/api/settings", async (c) => {
+    const user = getUserFromReq(c);
+    const { store, isSql } = getStore(c);
+    const body = await c.req.json<any>();
+
+    if (isSql) {
+      store.ctx.storage.sql.exec(
+        `UPDATE settings SET company_name = ?, default_subnet = ?, polling_interval = ?, auth_enabled = ?, webhook_url = ?`,
+        body.company_name, body.default_subnet, body.polling_interval, body.auth_enabled ? 1 : 0, body.webhook_url
+      );
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${Date.now()}`, user?.username || 'admin', 'Settings Updated', `Changed system branding & authentication rules`, Date.now()
+      );
+    } else {
+      memStore.settings = { ...memStore.settings, ...body, auth_enabled: body.auth_enabled ? 1 : 0 };
+      memStore.logAudit(user?.username || 'admin', 'Settings Updated', `Changed system branding & authentication rules`);
+    }
+
+    return c.json({ ok: true });
+  });
+
+  // Audit Logs
+  router.get("/api/audit-logs", (c) => {
+    const { store, isSql } = getStore(c);
+    if (isSql) {
+      const logs = store.ctx.storage.sql.exec(`SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100`).toArray();
+      return c.json(logs);
+    } else {
+      return c.json(memStore.auditLogs.slice(0, 100));
+    }
+  });
+
+  // Full Database Snapshot Export
+  router.get("/api/system/export", (c) => {
+    const { store, isSql } = getStore(c);
+
+    if (isSql) {
+      const nodes = store.ctx.storage.sql.exec(`SELECT * FROM nodes`).toArray();
+      const switchPorts = store.ctx.storage.sql.exec(`SELECT * FROM switch_ports`).toArray();
+      const cameraChannels = store.ctx.storage.sql.exec(`SELECT * FROM camera_channels`).toArray();
+      const alerts = store.ctx.storage.sql.exec(`SELECT * FROM alerts`).toArray();
+      const alertRules = store.ctx.storage.sql.exec(`SELECT * FROM alert_rules`).toArray();
+      const settings = store.ctx.storage.sql.exec(`SELECT * FROM settings LIMIT 1`).one();
+
+      return c.json({
+        app: "NetPulse Enterprise",
+        exported_at: Date.now(),
+        data: { nodes, switchPorts, cameraChannels, alerts, alertRules, settings }
+      });
+    } else {
+      return c.json({
+        app: "NetPulse Enterprise",
+        exported_at: Date.now(),
+        data: {
+          nodes: memStore.nodes,
+          switchPorts: memStore.switchPorts,
+          cameraChannels: memStore.cameraChannels,
+          alerts: memStore.alerts,
+          alertRules: memStore.alertRules,
+          settings: memStore.settings
+        }
+      });
+    }
+  });
+
+  // Import Backup Snapshot
+  router.post("/api/system/import", async (c) => {
+    const user = getUserFromReq(c);
+    const { store, isSql } = getStore(c);
+    const body = await c.req.json<any>();
+
+    if (!body || !body.data || !Array.isArray(body.data.nodes)) {
+      return c.json({ error: "Invalid backup JSON format" }, 400);
+    }
+
+    const backup = body.data;
+
+    if (isSql) {
+      store.ctx.storage.sql.exec(`DELETE FROM nodes`);
+      store.ctx.storage.sql.exec(`DELETE FROM switch_ports`);
+      store.ctx.storage.sql.exec(`DELETE FROM camera_channels`);
+      store.ctx.storage.sql.exec(`DELETE FROM alerts`);
+      store.ctx.storage.sql.exec(`DELETE FROM alert_rules`);
+
+      for (const n of backup.nodes) {
+        store.ctx.storage.sql.exec(
+          `INSERT INTO nodes (id, name, ip, type, status, vendor, model, location, rack, os_version, uptime_secs, cpu_usage, memory_usage, disk_usage, latency_ms, packet_loss, bandwidth_in_mbps, bandwidth_out_mbps, snmp_version, snmp_community, rtsp_url, ports_open, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          n.id, n.name, n.ip, n.type, n.status, n.vendor, n.model, n.location, n.rack, n.os_version, n.uptime_secs, n.cpu_usage, n.memory_usage, n.disk_usage, n.latency_ms, n.packet_loss, n.bandwidth_in_mbps, n.bandwidth_out_mbps, n.snmp_version, n.snmp_community, n.rtsp_url, n.ports_open, n.last_seen || Date.now()
+        );
+      }
+
+      if (Array.isArray(backup.switchPorts)) {
+        for (const p of backup.switchPorts) {
+          store.ctx.storage.sql.exec(
+            `INSERT INTO switch_ports (id, node_id, port_number, port_name, status, speed_mbps, vlan, poe_watts, poe_status, rx_kbps, tx_kbps, errors, connected_device_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            p.id, p.node_id, p.port_number, p.port_name, p.status, p.speed_mbps, p.vlan, p.poe_watts, p.poe_status, p.rx_kbps, p.tx_kbps, p.errors, p.connected_device_id
+          );
+        }
+      }
+
+      store.ctx.storage.sql.exec(
+        `INSERT INTO audit_logs (id, user, action, details, timestamp) VALUES (?, ?, ?, ?, ?)`,
+        `aud-${Date.now()}`, user?.username || 'admin', 'System Restore', `Restored network inventory from backup file`, Date.now()
+      );
+    } else {
+      memStore.nodes = backup.nodes;
+      if (Array.isArray(backup.switchPorts)) memStore.switchPorts = backup.switchPorts;
+      if (Array.isArray(backup.cameraChannels)) memStore.cameraChannels = backup.cameraChannels;
+      if (Array.isArray(backup.alerts)) memStore.alerts = backup.alerts;
+      if (Array.isArray(backup.alertRules)) memStore.alertRules = backup.alertRules;
+      memStore.logAudit(user?.username || 'admin', 'System Restore', `Restored network inventory from backup file`);
+    }
+
+    return c.json({ ok: true, nodeCount: backup.nodes.length });
+  });
+
   return router;
 }
 
-// Durable Object Class
+// Durable Object Class with Full SQLite Schema
 export class App extends DurableObject {
   private app: Hono;
   private initialized = false;
@@ -1164,6 +1665,37 @@ export class App extends DurableObject {
     if (this.initialized) return;
 
     this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        name TEXT,
+        role TEXT DEFAULT 'viewer',
+        created_at INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS settings (
+        company_name TEXT PRIMARY KEY,
+        default_subnet TEXT DEFAULT '192.168.1.0/24',
+        polling_interval INTEGER DEFAULT 2500,
+        auth_enabled INTEGER DEFAULT 1,
+        webhook_url TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY,
+        user TEXT NOT NULL,
+        action TEXT NOT NULL,
+        details TEXT NOT NULL,
+        timestamp INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS nodes (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -1267,6 +1799,18 @@ export class App extends DurableObject {
         last_scanned INTEGER
       );
     `);
+
+    const userCount = this.ctx.storage.sql.exec(`SELECT COUNT(*) as c FROM users`).one()?.c as number;
+    if (userCount === 0) {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO users (id, username, password, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        DEFAULT_ADMIN.id, DEFAULT_ADMIN.username, DEFAULT_ADMIN.password, DEFAULT_ADMIN.name, DEFAULT_ADMIN.role, DEFAULT_ADMIN.created_at
+      );
+      this.ctx.storage.sql.exec(
+        `INSERT INTO settings (company_name, default_subnet, polling_interval, auth_enabled, webhook_url) VALUES (?, ?, ?, ?, ?)`,
+        'Corporate HQ Network', '192.168.1.0/24', 2500, 1, 'https://hooks.slack.com/services/demo'
+      );
+    }
 
     const nodeCount = this.ctx.storage.sql.exec(`SELECT COUNT(*) as c FROM nodes`).one()?.c as number;
     if (nodeCount === 0) {
@@ -1398,7 +1942,7 @@ export default {
       return fallbackApp.fetch(request, env, ctx);
     }
 
-    // Default response for unmapped paths if static assets didn't handle it
+    // Default response for unmapped paths
     return new Response("Not found", { status: 404 });
   }
 };
