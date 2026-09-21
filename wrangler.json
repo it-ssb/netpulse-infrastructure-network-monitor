@@ -5,22 +5,6 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "NETPULSE_DO",
-        "class_name": "App"
-      }
-    ]
-  },
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": [
-        "App"
-      ]
-    }
-  ],
   "assets": {
     "directory": "./public",
     "html_handling": "auto-trailing-slash",
