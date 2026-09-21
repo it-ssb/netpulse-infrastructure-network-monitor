@@ -527,10 +527,10 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
     }
   };
 
-  // Auth Middleware
-  router.use("*", async (c, next) => {
+  // Auth Middleware only for /api/* routes
+  router.use("/api/*", async (c, next) => {
     const path = c.req.path;
-    // Allow public auth routes & status check regardless of path prefix
+    // Allow public auth routes & summary check
     if (
       path.endsWith("/api/auth/login") ||
       path.endsWith("/api/auth/status") ||
