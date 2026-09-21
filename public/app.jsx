@@ -42,7 +42,7 @@ function NetPulseApp() {
   // Fetch Summary Data
   const fetchSummary = async () => {
     try {
-      const res = await fetch('./api/dashboard/summary');
+      const res = await fetch('/api/dashboard/summary');
       if (res.ok) {
         const data = await res.json();
         setSummary(data);
@@ -55,7 +55,7 @@ function NetPulseApp() {
   // Fetch Nodes
   const fetchNodes = async () => {
     try {
-      const res = await fetch(`./api/nodes?type=${typeFilter}&status=${statusFilter}&search=${encodeURIComponent(searchTerm)}`);
+      const res = await fetch(`/api/nodes?type=${typeFilter}&status=${statusFilter}&search=${encodeURIComponent(searchTerm)}`);
       if (res.ok) {
         const data = await res.json();
         setNodes(data);
@@ -68,7 +68,7 @@ function NetPulseApp() {
   // Fetch Alerts
   const fetchAlerts = async () => {
     try {
-      const res = await fetch('./api/alerts');
+      const res = await fetch('/api/alerts');
       if (res.ok) {
         const data = await res.json();
         setAlerts(data);
@@ -81,7 +81,7 @@ function NetPulseApp() {
   // Fetch Alert Rules
   const fetchAlertRules = async () => {
     try {
-      const res = await fetch('./api/alert-rules');
+      const res = await fetch('/api/alert-rules');
       if (res.ok) {
         const data = await res.json();
         setAlertRules(data);
@@ -94,7 +94,7 @@ function NetPulseApp() {
   // Fetch Discovered Devices
   const fetchDiscovery = async () => {
     try {
-      const res = await fetch('./api/discovery');
+      const res = await fetch('/api/discovery');
       if (res.ok) {
         const data = await res.json();
         setDiscovered(data);
@@ -107,7 +107,7 @@ function NetPulseApp() {
   // Fetch Camera Channels
   const fetchCameras = async () => {
     try {
-      const res = await fetch('./api/cameras');
+      const res = await fetch('/api/cameras');
       if (res.ok) {
         const data = await res.json();
         setCameraChannels(data.channels || []);
@@ -120,7 +120,7 @@ function NetPulseApp() {
   // Fetch Node Details
   const fetchNodeDetails = async (nodeId) => {
     try {
-      const res = await fetch(`./api/nodes/${nodeId}`);
+      const res = await fetch(`/api/nodes/${nodeId}`);
       if (res.ok) {
         const data = await res.json();
         setSelectedNodeDetails(data);
@@ -168,7 +168,7 @@ function NetPulseApp() {
   // Handle Acknowledge Alert
   const handleAckAlert = async (alertId) => {
     try {
-      const res = await fetch(`./api/alerts/${alertId}/ack`, { method: 'POST' });
+      const res = await fetch(`/api/alerts/${alertId}/ack`, { method: 'POST' });
       if (res.ok) {
         showToast('Alert acknowledged', 'success');
         fetchAlerts();
@@ -182,7 +182,7 @@ function NetPulseApp() {
   // Handle Resolve Alert
   const handleResolveAlert = async (alertId) => {
     try {
-      const res = await fetch(`./api/alerts/${alertId}/resolve`, { method: 'POST' });
+      const res = await fetch(`/api/alerts/${alertId}/resolve`, { method: 'POST' });
       if (res.ok) {
         showToast('Alert marked as resolved', 'success');
         fetchAlerts();
@@ -196,7 +196,7 @@ function NetPulseApp() {
   // Handle Simulate Fault
   const handleSimulateFault = async (nodeId, action) => {
     try {
-      const res = await fetch(`./api/nodes/${nodeId}/simulate-fault`, {
+      const res = await fetch(`/api/nodes/${nodeId}/simulate-fault`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action })
@@ -218,7 +218,7 @@ function NetPulseApp() {
     setIsScanning(true);
     showToast(`Scanning subnet ${scanSubnet}...`, 'info');
     try {
-      const res = await fetch('./api/discovery/scan', {
+      const res = await fetch('/api/discovery/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subnet: scanSubnet })
@@ -238,7 +238,7 @@ function NetPulseApp() {
   // Handle Import Discovered Device
   const handleImportDevice = async (ip) => {
     try {
-      const res = await fetch('./api/discovery/import', {
+      const res = await fetch('/api/discovery/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ip })
@@ -257,7 +257,7 @@ function NetPulseApp() {
   const handlePortToggle = async (portId, newStatus) => {
     if (!selectedNodeDetails) return;
     try {
-      const res = await fetch(`./api/nodes/${selectedNodeDetails.id}/ports/${portId}`, {
+      const res = await fetch(`/api/nodes/${selectedNodeDetails.id}/ports/${portId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -1652,7 +1652,7 @@ function NodeDetailsModal({ node, onClose, onSimulateFault, getTypeIcon, formatU
   const handlePollNow = async () => {
     setIsPolling(true);
     try {
-      const res = await fetch(`./api/nodes/${node.id}/poll-now`, { method: 'POST' });
+      const res = await fetch(`/api/nodes/${node.id}/poll-now`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setLiveMetrics((prev) => ({
@@ -1831,7 +1831,7 @@ function AddDeviceModal({ onClose, onAdded }) {
 
     setTimeout(async () => {
       try {
-        const res = await fetch('./api/nodes/probe-and-add', {
+        const res = await fetch('/api/nodes/probe-and-add', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
