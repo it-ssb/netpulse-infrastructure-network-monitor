@@ -528,13 +528,13 @@ function buildApiRouter(getStore: (c: any) => { store: any, isSql: boolean }) {
   };
 
   // Auth Middleware
-  router.use("/api/*", async (c, next) => {
+  router.use("*", async (c, next) => {
     const path = c.req.path;
-    // Allow public auth routes & health check
+    // Allow public auth routes & status check regardless of path prefix
     if (
-      path === "/api/auth/login" ||
-      path === "/api/auth/status" ||
-      path === "/api/dashboard/summary"
+      path.endsWith("/api/auth/login") ||
+      path.endsWith("/api/auth/status") ||
+      path.endsWith("/api/dashboard/summary")
     ) {
       return await next();
     }
@@ -1938,7 +1938,7 @@ export default {
     }
 
     // Direct Worker API fallback for /api/* endpoints
-    if (url.pathname.startsWith("/api/")) {
+    if (url.pathname.startsWith("/api/") || url.pathname.includes("/api/")) {
       return fallbackApp.fetch(request, env, ctx);
     }
 
