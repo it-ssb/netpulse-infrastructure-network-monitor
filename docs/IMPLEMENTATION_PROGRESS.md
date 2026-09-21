@@ -64,3 +64,7 @@
 
 3. **Production Mode Guard**:
    - Enforce server-side disablement of simulation endpoints when running in production mode.
+
+## Persistence implementation (September 2026)
+
+Implemented ADR-002 local Node.js/SQLite runtime, versioned relational schema, fail-closed startup, transactional inventory operations, staged atomic full backup replacement, partial settings updates, missing-row handling, separate encrypted credential storage and bounded telemetry history. Added real SQLite integration tests and gauge retention maintenance. See [PERSISTENCE.md](PERSISTENCE.md) for operational limits, counter retention, legacy migration constraints and verification commands. Collector integration and production load/recovery qualification remain outstanding.

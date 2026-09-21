@@ -103,3 +103,7 @@ dist
 # Cache OpenAI / OS-specific files
 .DS_Store
 Thumbs.db
+# Local persistent database files
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

@@ -201,3 +201,7 @@ To pass from implementation into pilot phase on AlmaLinux 9.8, the system must s
 ### Stage 6: AlmaLinux 9.8 RPM / Systemd Deployment & Hardening
 - [ ] Create systemd service template (`netpulse.service`) and install script (`install.sh`) for AlmaLinux 9.8.
 - [ ] Implement audit logging to systemd journal (`journalctl`) and local security audit file.
+
+## ADR-002: Persistent backend selection
+
+The implementation selects local SQLite and Node.js 24+ for the initial deployment, superseding the Cloudflare Durable Object prototype and resolving the SQLite/PostgreSQL alternative in ADR-001. See [PERSISTENCE.md](PERSISTENCE.md) for the implemented schema, migration, retention and recovery contracts, including scale limitations requiring pilot measurements.
