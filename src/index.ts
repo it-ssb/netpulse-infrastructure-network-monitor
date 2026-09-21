@@ -1926,23 +1926,25 @@ export default {
   async fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // Try Durable Object first if bound
-    if (env && env.NETPULSE_DO) {
-      try {
-        const id = env.NETPULSE_DO.idFromName("global");
-        const stub = env.NETPULSE_DO.get(id);
-        return await stub.fetch(request);
-      } catch (e) {
-        console.error("Durable Object invocation error, using worker fallback API:", e);
+    // Route /api/* requests or websocket upgrades to the Durable Object or Hono API router
+    if (url.pathname.includes("/api/") || request.headers.get("Upgrade") === "websocket") {
+      if (env && env.NETPULSE_DO) {
+        try {
+          const id = env.NETPULSE_DO.idFromName("global");
+          const stub = env.NETPULSE_DO.get(id);
+          return await stub.fetch(request);
+        } catch (e) {
+          console.error("Durable Object invocation error, using worker fallback API:", e);
+        }
       }
-    }
-
-    // Direct Worker API fallback for /api/* endpoints
-    if (url.pathname.startsWith("/api/") || url.pathname.includes("/api/")) {
       return fallbackApp.fetch(request, env, ctx);
     }
 
-    // Default response for unmapped paths
+    // Serve static assets via Cloudflare Workers Asset binding
+    if (env && env.ASSETS) {
+      return env.ASSETS.fetch(request);
+    }
+
     return new Response("Not found", { status: 404 });
   }
 };
